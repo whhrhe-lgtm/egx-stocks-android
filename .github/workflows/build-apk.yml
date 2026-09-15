@@ -33,10 +33,23 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y \
-            git zip unzip openjdk-17-jdk python3-pip \
-            autoconf libtool pkg-config zlib1g-dev \
-            libncurses5-dev libncursesw5-dev libtinfo5 \
-            cmake libffi-dev libssl-dev automake libltdl-dev
+            git \
+            zip \
+            unzip \
+            openjdk-17-jdk \
+            python3-pip \
+            autoconf \
+            libtool \
+            pkg-config \
+            zlib1g-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libtinfo5 \
+            cmake \
+            libffi-dev \
+            libssl-dev \
+            automake \
+            libltdl-dev
 
       - name: Install Buildozer
         run: |
@@ -48,21 +61,13 @@ jobs:
         run: |
           sed -i '/android.accept_sdk_license/d' buildozer.spec
           sed -i '/^\[app\]/a android.accept_sdk_license = True' buildozer.spec
-          echo "SDK license setting:"
+
+          echo "Android SDK license setting:"
           grep -n "android.accept_sdk_license" buildozer.spec
 
       - name: Download Android SDK and NDK
         run: |
           buildozer android p4a -- --help
-
-      - name: Verify AIDL
-        run: |
-          SDK="$HOME/.buildozer/android/platform/android-sdk"
-          echo "SDK: $SDK"
-          find "$SDK/build-tools" -type f -name aidl -perm -111 -print
-          AIDL=$(find "$SDK/build-tools" -type f -name aidl -perm -111 | head -n 1)
-          test -n "$AIDL"
-          "$AIDL" --version
 
       - name: Build APK
         run: |
@@ -70,8 +75,19 @@ jobs:
 
       - name: Verify APK
         run: |
+          echo "APK files:"
           ls -lah bin/
-          test -n "$(find bin -maxdepth 1 -type f -name '*.apk')"
+
+          APK_COUNT=$(find bin -maxdepth 1 -type f -name "*.apk" | wc -l)
+
+          echo "APK count: $APK_COUNT"
+
+          if [ "$APK_COUNT" -eq 0 ]; then
+            echo "ERROR: No APK was created."
+            exit 1
+          fi
+
+          echo "APK successfully created."
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
