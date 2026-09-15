@@ -11,102 +11,70 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-22.04
 
     steps:
 
-      # --------------------------------------------------
-      # Python
-      # --------------------------------------------------
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-
-      # --------------------------------------------------
-      # Java 17
-      # --------------------------------------------------
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           java-version: "17"
           distribution: "temurin"
 
-
-      # --------------------------------------------------
-      # Download project
-      # --------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
-
-      # --------------------------------------------------
-      # Linux dependencies
-      # --------------------------------------------------
       - name: Install system dependencies
         run: |
           sudo apt update
-
           sudo apt install -y \
-            git \
-            zip \
-            unzip \
-            openjdk-17-jdk \
-            python3-pip \
-            autoconf \
-            libtool \
-            pkg-config \
-            zlib1g-dev \
-            libncurses5-dev \
-            libncursesw5-dev \
-            libtinfo5 \
-            cmake \
-            libffi-dev \
-            libssl-dev \
-            automake \
-            libltdl-dev
+            git zip unzip openjdk-17-jdk python3-pip \
+            autoconf libtool pkg-config zlib1g-dev \
+            libncurses5-dev libncursesw5-dev libtinfo5 \
+            cmake libffi-dev libssl-dev automake libltdl-dev
 
-
-      # --------------------------------------------------
-      # Buildozer
-      # --------------------------------------------------
       - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip
           python -m pip install --upgrade buildozer
           python -m pip install "cython==0.29.34"
 
-
-      # --------------------------------------------------
-      # FORCE Android SDK license acceptance
-      # --------------------------------------------------
-      - name: Configure Buildozer
-        shell: bash
+      - name: Enable Android SDK license
         run: |
+          sed -i '/android.accept_sdk_license/d' buildozer.spec
+          sed -i '/^\[app\]/a android.accept_sdk_license = True' buildozer.spec
+          echo "SDK license setting:"
+          grep -n "android.accept_sdk_license" buildozer.spec
 
-          echo "========================================"
-          echo "Configuring buildozer.spec"
-          echo "========================================"
+      - name: Download Android SDK and NDK
+        run: |
+          buildozer android p4a -- --help
 
-          # Remove every existing version of the SDK license setting.
-          sed -i '/^[[:space:]]*#\{0,1\}[[:space:]]*android\.accept_sdk_license[[:space:]]*=/d' buildozer.spec
+      - name: Verify AIDL
+        run: |
+          SDK="$HOME/.buildozer/android/platform/android-sdk"
+          echo "SDK: $SDK"
+          find "$SDK/build-tools" -type f -name aidl -perm -111 -print
+          AIDL=$(find "$SDK/build-tools" -type f -name aidl -perm -111 | head -n 1)
+          test -n "$AIDL"
+          "$AIDL" --version
 
-          # Add exactly one active setting immediately after [app].
-          python - <<'PY'
-          from pathlib import Path
+      - name: Build APK
+        run: |
+          buildozer -v android debug
 
-          path = Path("buildozer.spec")
-          text = path.read_text()
+      - name: Verify APK
+        run: |
+          ls -lah bin/
+          test -n "$(find bin -maxdepth 1 -type f -name '*.apk')"
 
-          marker = "[app]"
-          setting = "android.accept_sdk_license = True"
-
-          if marker not in text:
-              raise SystemExit("ERROR: [app] section was not found.")
-
-          parts = text.split(marker, 1)
-
-          before = parts[0]
-          after = parts
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: egx-stocks-apk
+          path: bin/*.apk
