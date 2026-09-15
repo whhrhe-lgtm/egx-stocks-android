@@ -6,13 +6,14 @@ on:
     branches:
       - main
 
+env:
+  PYTHONFORANDROID_PREREQUISITES_INSTALL_INTERACTIVE: 0
+
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -25,14 +26,18 @@ jobs:
           java-version: "17"
           distribution: "temurin"
 
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt update
+          sudo apt install -y \
             git \
             zip \
             unzip \
             openjdk-17-jdk \
+            python3-pip \
             autoconf \
             libtool \
             pkg-config \
@@ -43,7 +48,8 @@ jobs:
             cmake \
             libffi-dev \
             libssl-dev \
-            automake
+            automake \
+            libltdl-dev
 
       - name: Install Buildozer
         run: |
@@ -51,13 +57,77 @@ jobs:
           python -m pip install --upgrade buildozer
           python -m pip install "cython==0.29.34"
 
-      - name: Accept Android SDK licenses
+      - name: Prepare Buildozer
         run: |
-          sed -i 's/^# *android.accept_sdk_license = False/android.accept_sdk_license = True/' buildozer.spec || true
+          if grep -q "android.accept_sdk_license" buildozer.spec; then
+            sed -i 's/^# *android.accept_sdk_license.*/android.accept_sdk_license = True/' buildozer.spec
+          fi
+
+      - name: Download Android SDK and NDK
+        run: |
+          buildozer android p4a -- --help
+
+      - name: Accept Android licenses and install Build Tools
+        shell: bash
+        run: |
+          SDK="$HOME/.buildozer/android/platform/android-sdk"
+
+          echo "Android SDK: $SDK"
+
+          if [ -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          elif [ -x "$SDK/cmdline-tools/bin/sdkmanager" ]; then
+            SDKMANAGER="$SDK/cmdline-tools/bin/sdkmanager"
+          elif [ -x "$SDK/tools/bin/sdkmanager" ]; then
+            SDKMANAGER="$SDK/tools/bin/sdkmanager"
+          else
+            SDKMANAGER="$(find "$SDK" -type f -name sdkmanager -perm -111 | head -n 1)"
+          fi
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager was not found."
+            find "$SDK" -maxdepth 5 -type f -name sdkmanager || true
+            exit 1
+          fi
+
+          echo "Using sdkmanager: $SDKMANAGER"
+
+          yes | "$SDKMANAGER" --licenses || true
+
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;37.0.0"
+
+          yes | "$SDKMANAGER" --licenses || true
+
+          echo "Checking Build Tools..."
+          ls -la "$SDK/build-tools" || true
+
+          echo "Searching for AIDL..."
+          AIDL="$(find "$SDK/build-tools" -type f -name aidl -perm -111 | head -n 1)"
+
+          if [ -z "$AIDL" ]; then
+            echo "ERROR: AIDL was not found after installing Build Tools."
+            find "$SDK/build-tools" -maxdepth 3 -type f -name aidl || true
+            exit 1
+          fi
+
+          echo "AIDL found at:"
+          echo "$AIDL"
+
+          "$AIDL" --version
 
       - name: Build APK
         run: |
           buildozer -v android debug
+
+      - name: Verify APK
+        run: |
+          echo "APK files:"
+          ls -lah bin/
+
+          test -n "$(find bin -maxdepth 1 -name '*.apk' -type f)"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
