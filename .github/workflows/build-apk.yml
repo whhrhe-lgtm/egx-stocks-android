@@ -3,7 +3,8 @@ name: Build EGX Stocks APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
 
 jobs:
   build:
@@ -13,12 +14,50 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build APK with Buildozer
-        uses: ArtemSBulgakov/buildozer-action@v1
-        id: buildozer
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          command: buildozer -v android debug
-          workdir: .
+          python-version: "3.11"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            zip \
+            unzip \
+            openjdk-17-jdk \
+            autoconf \
+            libtool \
+            pkg-config \
+            zlib1g-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libtinfo5 \
+            cmake \
+            libffi-dev \
+            libssl-dev \
+            automake
+
+      - name: Install Buildozer
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade buildozer
+          python -m pip install "cython==0.29.34"
+
+      - name: Accept Android SDK licenses
+        run: |
+          sed -i 's/^# *android.accept_sdk_license = False/android.accept_sdk_license = True/' buildozer.spec || true
+
+      - name: Build APK
+        run: |
+          buildozer -v android debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
