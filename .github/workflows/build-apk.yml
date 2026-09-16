@@ -18,10 +18,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python 3.14
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.12"
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -56,35 +56,61 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install buildozer
-
-          python -m pip install \
-            legacy-cgi \
-            setuptools \
-            cython==0.29.34
+          python -m pip install "cython<3.4"
 
       - name: Configure Buildozer
         run: |
-          echo "===== Applying Android build configuration ====="
+          python - <<'PY'
+          from pathlib import Path
 
-          # Accept Android SDK licenses automatically
-          sed -i '/android.accept_sdk_license/d' buildozer.spec
-          sed -i '/^\[app\]/a android.accept_sdk_license = True' buildozer.spec
+          path = Path("buildozer.spec")
+          text = path.read_text()
 
-          # Use python-for-android develop branch
-          sed -i '/^p4a.url/d' buildozer.spec
-          sed -i '/^p4a.branch/d' buildozer.spec
-          sed -i '/^p4a.commit/d' buildozer.spec
+          # Remove previous values that may conflict
+          lines = text.splitlines()
+          new_lines = []
 
-          sed -i '/^\[app\]/a p4a.url = https://github.com/kivy/python-for-android.git' buildozer.spec
-          sed -i '/^\[app\]/a p4a.branch = develop' buildozer.spec
-          sed -i '/^\[app\]/a p4a.commit = 869c74b' buildozer.spec
+          for line in lines:
+              stripped = line.strip()
 
-          echo ""
-          echo "===== Effective Buildozer configuration ====="
+              if stripped.startswith("p4a.branch"):
+                  continue
+
+              if stripped.startswith("p4a.commit"):
+                  continue
+
+              if stripped.startswith("android.accept_sdk_license"):
+                  continue
+
+              new_lines.append(line)
+
+          text = "\n".join(new_lines) + "\n"
+
+          # Insert the required settings immediately after [app]
+          marker = "[app]"
+          settings = (
+              "android.accept_sdk_license = True\n"
+              "p4a.branch = master\n"
+              "p4a.commit = 58d2114\n"
+          )
+
+          if marker not in text:
+              raise SystemExit("ERROR: [app] section not found in buildozer.spec")
+
+          text = text.replace(
+              marker + "\n",
+              marker + "\n" + settings,
+              1
+          )
+
+          path.write_text(text)
+          PY
+
+          echo "===== Buildozer settings ====="
           grep -E \
-            'android.accept_sdk_license|p4a.url|p4a.branch|p4a.commit|android.api|android.ndk|android.archs|requirements' \
+            'android.accept_sdk_license|p4a.branch|p4a.commit|android.api|android.ndk|android.archs|requirements' \
             buildozer.spec || true
-          echo "=============================================="
+          echo "=============================="
 
       - name: Clean Buildozer cache
         run: |
@@ -94,48 +120,19 @@ jobs:
         run: |
           buildozer android p4a -- --help
 
-      - name: Verify python-for-android revision
-        run: |
-          echo "===== python-for-android revision ====="
-
-          P4A_DIR="$HOME/.buildozer/android/platform/python-for-android"
-
-          if [ ! -d "$P4A_DIR/.git" ]; then
-            echo "ERROR: python-for-android Git repository was not found."
-            exit 1
-          fi
-
-          cd "$P4A_DIR"
-
-          echo "Current commit:"
-          git rev-parse HEAD
-
-          echo "Current branch:"
-          git branch --show-current
-
-          echo "Expected commit:"
-          echo "869c74b"
-
-          if ! git rev-parse HEAD | grep -q "^869c74b"; then
-            echo "ERROR: Wrong python-for-android revision."
-            exit 1
-          fi
-
-          echo "python-for-android revision verified."
-
       - name: Build APK
         run: |
           set -o pipefail
 
           buildozer -v android debug 2>&1 | tee build.log
 
-      - name: Show build log on failure
+      - name: Show useful build information on failure
         if: failure()
         run: |
           echo ""
-          echo "=================================================="
-          echo "LAST 300 LINES OF BUILD LOG"
-          echo "=================================================="
+          echo "=============================================="
+          echo "BUILD FAILED - LAST 300 LOG LINES"
+          echo "=============================================="
 
           if [ -f build.log ]; then
             tail -n 300 build.log
@@ -145,21 +142,23 @@ jobs:
 
       - name: Verify APK
         run: |
-          echo "===== Searching for APK ====="
+          echo "=============================================="
+          echo "APK FILES"
+          echo "=============================================="
 
           find bin -maxdepth 1 -type f -name "*.apk" -print
 
           APK_COUNT=$(find bin -maxdepth 1 -type f -name "*.apk" | wc -l)
 
           if [ "$APK_COUNT" -eq 0 ]; then
-            echo "ERROR: APK was not created."
+            echo "ERROR: No APK was created."
             exit 1
           fi
 
           echo ""
           echo "APK successfully created."
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: egx-stocks-apk
