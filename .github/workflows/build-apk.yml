@@ -18,10 +18,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python 3.12
+      - name: Setup Python 3.14
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -32,6 +32,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             git \
             zip \
@@ -51,26 +52,41 @@ jobs:
             automake \
             libltdl-dev
 
-      - name: Install Buildozer and Python build dependencies
+      - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip
-          python -m pip install buildozer setuptools cython==0.29.34
+          python -m pip install buildozer
+
+          python -m pip install \
+            legacy-cgi \
+            setuptools \
+            cython==0.29.34
 
       - name: Configure Buildozer
         run: |
+          echo "===== Applying Android build configuration ====="
+
           # Accept Android SDK licenses automatically
           sed -i '/android.accept_sdk_license/d' buildozer.spec
           sed -i '/^\[app\]/a android.accept_sdk_license = True' buildozer.spec
 
-          # Force python-for-android master for Python 3.12
-          sed -i 's/^p4a.branch = .*/p4a.branch = master/' buildozer.spec
+          # Use python-for-android develop branch
+          sed -i '/^p4a.url/d' buildozer.spec
+          sed -i '/^p4a.branch/d' buildozer.spec
+          sed -i '/^p4a.commit/d' buildozer.spec
 
-          # Show the final relevant configuration
-          echo "===== Buildozer configuration ====="
-          grep -E 'android.accept_sdk_license|p4a.branch|android.api|android.ndk|android.archs|requirements' buildozer.spec || true
-          echo "===================================="
+          sed -i '/^\[app\]/a p4a.url = https://github.com/kivy/python-for-android.git' buildozer.spec
+          sed -i '/^\[app\]/a p4a.branch = develop' buildozer.spec
+          sed -i '/^\[app\]/a p4a.commit = 869c74b' buildozer.spec
 
-      - name: Clean previous Buildozer cache
+          echo ""
+          echo "===== Effective Buildozer configuration ====="
+          grep -E \
+            'android.accept_sdk_license|p4a.url|p4a.branch|p4a.commit|android.api|android.ndk|android.archs|requirements' \
+            buildozer.spec || true
+          echo "=============================================="
+
+      - name: Clean Buildozer cache
         run: |
           rm -rf ~/.buildozer
 
@@ -78,24 +94,59 @@ jobs:
         run: |
           buildozer android p4a -- --help
 
+      - name: Verify python-for-android revision
+        run: |
+          echo "===== python-for-android revision ====="
+
+          P4A_DIR="$HOME/.buildozer/android/platform/python-for-android"
+
+          if [ ! -d "$P4A_DIR/.git" ]; then
+            echo "ERROR: python-for-android Git repository was not found."
+            exit 1
+          fi
+
+          cd "$P4A_DIR"
+
+          echo "Current commit:"
+          git rev-parse HEAD
+
+          echo "Current branch:"
+          git branch --show-current
+
+          echo "Expected commit:"
+          echo "869c74b"
+
+          if ! git rev-parse HEAD | grep -q "^869c74b"; then
+            echo "ERROR: Wrong python-for-android revision."
+            exit 1
+          fi
+
+          echo "python-for-android revision verified."
+
       - name: Build APK
         run: |
           set -o pipefail
+
           buildozer -v android debug 2>&1 | tee build.log
 
       - name: Show build log on failure
         if: failure()
         run: |
-          echo "=========================================="
+          echo ""
+          echo "=================================================="
           echo "LAST 300 LINES OF BUILD LOG"
-          echo "=========================================="
+          echo "=================================================="
+
           if [ -f build.log ]; then
             tail -n 300 build.log
+          else
+            echo "build.log was not created."
           fi
 
       - name: Verify APK
         run: |
-          echo "===== APK files ====="
+          echo "===== Searching for APK ====="
+
           find bin -maxdepth 1 -type f -name "*.apk" -print
 
           APK_COUNT=$(find bin -maxdepth 1 -type f -name "*.apk" | wc -l)
@@ -105,6 +156,7 @@ jobs:
             exit 1
           fi
 
+          echo ""
           echo "APK successfully created."
 
       - name: Upload APK artifact
