@@ -15,19 +15,19 @@ jobs:
 
     steps:
 
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           java-version: "17"
           distribution: "temurin"
-
-      - name: Checkout
-        uses: actions/checkout@v4
 
       - name: Install system dependencies
         run: |
@@ -55,15 +55,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --upgrade buildozer
-          python -m pip install "cython==0.29.34"
+          python -m pip install "cython<3.4"
 
-      - name: Enable Android SDK license
+      - name: Configure Buildozer
         run: |
           sed -i '/android.accept_sdk_license/d' buildozer.spec
           sed -i '/^\[app\]/a android.accept_sdk_license = True' buildozer.spec
 
-          echo "Android SDK license setting:"
-          grep -n "android.accept_sdk_license" buildozer.spec
+          echo "===== Buildozer configuration ====="
+          grep -E '^(python\.requirements|requirements|p4a\.|android\.api|android\.minapi|android\.ndk|android\.archs|android\.accept_sdk_license)' buildozer.spec || true
 
       - name: Download Android SDK and NDK
         run: |
@@ -75,7 +75,7 @@ jobs:
 
       - name: Verify APK
         run: |
-          echo "APK files:"
+          echo "===== APK files ====="
           ls -lah bin/
 
           APK_COUNT=$(find bin -maxdepth 1 -type f -name "*.apk" | wc -l)
