@@ -15,24 +15,24 @@ jobs:
 
     steps:
 
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.12"
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
-          java-version: "17"
           distribution: "temurin"
+          java-version: "17"
 
       - name: Install system dependencies
         run: |
-          sudo apt update
-          sudo apt install -y \
+          sudo apt-get update
+          sudo apt-get install -y \
             git \
             zip \
             unzip \
@@ -51,46 +51,65 @@ jobs:
             automake \
             libltdl-dev
 
-      - name: Install Buildozer
+      - name: Install Buildozer and Python build dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --upgrade buildozer
-          python -m pip install "cython<3.4"
+          python -m pip install buildozer setuptools cython==0.29.34
 
       - name: Configure Buildozer
         run: |
+          # Accept Android SDK licenses automatically
           sed -i '/android.accept_sdk_license/d' buildozer.spec
           sed -i '/^\[app\]/a android.accept_sdk_license = True' buildozer.spec
 
-          echo "===== Buildozer configuration ====="
-          grep -E '^(python\.requirements|requirements|p4a\.|android\.api|android\.minapi|android\.ndk|android\.archs|android\.accept_sdk_license)' buildozer.spec || true
+          # Force python-for-android master for Python 3.12
+          sed -i 's/^p4a.branch = .*/p4a.branch = master/' buildozer.spec
 
-      - name: Download Android SDK and NDK
+          # Show the final relevant configuration
+          echo "===== Buildozer configuration ====="
+          grep -E 'android.accept_sdk_license|p4a.branch|android.api|android.ndk|android.archs|requirements' buildozer.spec || true
+          echo "===================================="
+
+      - name: Clean previous Buildozer cache
+        run: |
+          rm -rf ~/.buildozer
+
+      - name: Initialize python-for-android
         run: |
           buildozer android p4a -- --help
 
       - name: Build APK
         run: |
-          buildozer -v android debug
+          set -o pipefail
+          buildozer -v android debug 2>&1 | tee build.log
+
+      - name: Show build log on failure
+        if: failure()
+        run: |
+          echo "=========================================="
+          echo "LAST 300 LINES OF BUILD LOG"
+          echo "=========================================="
+          if [ -f build.log ]; then
+            tail -n 300 build.log
+          fi
 
       - name: Verify APK
         run: |
           echo "===== APK files ====="
-          ls -lah bin/
+          find bin -maxdepth 1 -type f -name "*.apk" -print
 
           APK_COUNT=$(find bin -maxdepth 1 -type f -name "*.apk" | wc -l)
 
-          echo "APK count: $APK_COUNT"
-
           if [ "$APK_COUNT" -eq 0 ]; then
-            echo "ERROR: No APK was created."
+            echo "ERROR: APK was not created."
             exit 1
           fi
 
           echo "APK successfully created."
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: egx-stocks-apk
           path: bin/*.apk
+          if-no-files-found: error
